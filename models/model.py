@@ -181,6 +181,8 @@ class HOIVisionTransformer(nn.Module):
         hoi_parser_attn_mask: torch.Tensor = None,
         use_semantic_query: bool = False,
         semantic_units_file: str = "",
+        semantic_heads: int = 8,
+        semantic_layers: int = 6,
         # bounding box head
         enable_dec: bool = False,
         dec_heads: int = 8,
@@ -210,7 +212,7 @@ class HOIVisionTransformer(nn.Module):
         self.use_semantic_query = use_semantic_query
         if use_semantic_query:
             self.semancit_query_genarator = nn.MultiheadAttention(embed_dim=width, num_heads=8)
-            self.semantic_transformer = SemanticHOITransformer(width=width, layers=4, heads=8, attn_mask=hoi_parser_attn_mask)
+            self.semantic_transformer = SemanticHOITransformer(width=width, layers=semantic_layers, heads=semantic_heads, attn_mask=hoi_parser_attn_mask)
             if os.path.exists(semantic_units_file):
                 print("[INFO] load semantic units from", semantic_units_file)
                 self.semantic_units = pickle.load(open(semantic_units_file, "rb"))
@@ -375,6 +377,8 @@ class HOIDetector(nn.Module):
         hoi_token_length: int,
         use_semantic_query: bool,
         semantic_units_file: str,
+        semantic_heads: int,
+        semantic_layers: int,
         # detection head
         enable_dec: bool,
         dec_heads: int,
@@ -406,6 +410,8 @@ class HOIDetector(nn.Module):
             hoi_parser_attn_mask=self.build_hoi_attention_mask(),
             use_semantic_query=use_semantic_query,
             semantic_units_file=semantic_units_file,
+            semantic_heads=semantic_heads,
+            semantic_layers=semantic_layers,
             enable_dec=enable_dec,
             dec_heads=dec_heads,
             dec_layers=dec_layers,
@@ -658,6 +664,8 @@ def build_model(args):
         hoi_token_length=args.hoi_token_length,
         use_semantic_query=args.use_semantic_query,
         semantic_units_file=args.semantic_units_file,
+        semantic_heads=args.semantic_heads,
+        semantic_layers=args.semantic_layers,
         # bounding box head
         enable_dec=args.enable_dec,
         dec_heads=args.dec_heads,

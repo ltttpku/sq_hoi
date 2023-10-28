@@ -36,6 +36,10 @@ def get_args_parser():
                         help='whether to use prompt hint in the text encoder')
     parser.add_argument('--semantic_units_file', default="", type=str,
                         help='whether to use prompt hint in the text encoder')
+    parser.add_argument('--semantic_heads', default=8, type=int,
+                        help="Number of multi-head attention")
+    parser.add_argument('--semantic_layers', default=4, type=int,
+                        help="Number of layers in the bounding box head")
     # * Text
     parser.add_argument('--context_length', default=77, type=int,
                         help="Maximum length of the text description")
