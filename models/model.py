@@ -210,7 +210,7 @@ class HOIVisionTransformer(nn.Module):
         self.use_semantic_query = use_semantic_query
         if use_semantic_query:
             self.semancit_query_genarator = nn.MultiheadAttention(embed_dim=width, num_heads=8)
-            self.semantic_transformer = SemanticHOITransformer(width, layers, heads, hoi_parser_attn_mask)
+            self.semantic_transformer = SemanticHOITransformer(width=width, layers=4, heads=8, attn_mask=hoi_parser_attn_mask)
             if os.path.exists(semantic_units_file):
                 print("[INFO] load semantic units from", semantic_units_file)
                 self.semantic_units = pickle.load(open(semantic_units_file, "rb"))
