@@ -10,8 +10,8 @@
 #SBATCH --mem=100G               # total memory (RAM) per node
 #SBATCH --time=0-24:00:00          # total run time limit (HH:MM:SS)
 #SBATCH --cpus-per-task=8      # cpu-cores per task (>1 if multi-threaded tasks)
-#SBATCH --output=/scratch/generalvision/ting/OVHOID-prompt/logs/out-%j.out      # output format
-#SBATCH --error=/scratch/generalvision/ting/OVHOID-prompt/logs/out-%j.err      # error output file
+#SBATCH --output=/scratch/generalvision/ting/sq_hoi/logs/out-%j.out      # output format
+#SBATCH --error=/scratch/generalvision/ting/sq_hoi/logs/out-%j.err      # error output file
 ### SBATCH --exclude=lambda-hyperplane[00]
 ### SBATCH --export=ALL
 
@@ -27,7 +27,7 @@ source /etc/profile
 module load slurm/BigAI/23.02.2
 module load cuda11.7
 
-cd /scratch/generalvision/ting/OVHOID-prompt
+cd /scratch/generalvision/ting/sq_hoi
 # source activate
 # conda activate thid
 
