@@ -35,7 +35,7 @@ cd /scratch/generalvision/ting/sq_hoi
 ## Training
 /home/leiting/scratch/.conda/envs/thid/bin/python -m torch.distributed.launch --nproc_per_node=4 --master_port 2990 --use_env main.py \
     --batch_size 32 \
-    --output_dir checkpoints/swig_bs4x32_lr1e-4_token10_su50 \
+    --output_dir checkpoints/swig_bs4x32_lr1e-4_token10_su50_SLayer4 \
     --epochs 150 \
     --lr 1e-4 --min-lr 1e-7 \
     --hoi_token_length 10 \
