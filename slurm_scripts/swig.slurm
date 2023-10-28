@@ -40,7 +40,7 @@ cd /scratch/generalvision/ting/sq_hoi
     --lr 1e-4 --min-lr 1e-7 \
     --hoi_token_length 10 \
     --enable_dec \
-    --dataset_file swig --semantic_query true --semantic_units_file semantic_units_files/su_word_50.pkl
+    --dataset_file swig --use_semantic_query true --semantic_units_file semantic_units_files/su_word_50.pkl
 
 
 # ## Inference
