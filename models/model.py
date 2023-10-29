@@ -211,7 +211,7 @@ class HOIVisionTransformer(nn.Module):
 
         self.use_semantic_query = use_semantic_query
         if use_semantic_query:
-            self.semancit_query_genarator = nn.MultiheadAttention(embed_dim=width, num_heads=8)
+            # self.semancit_hoi_query_genarator = nn.MultiheadAttention(embed_dim=width, num_heads=8)
             self.semantic_hoi_transformer = SemanticHOITransformer(width=width, layers=semantic_layers, heads=semantic_heads, attn_mask=hoi_parser_attn_mask)
             if os.path.exists(semantic_units_file):
                 print("[INFO] load semantic units from", semantic_units_file)
@@ -222,7 +222,7 @@ class HOIVisionTransformer(nn.Module):
             else:
                 print("[WARNING] use random semantic units!!!")
                 self.semantic_units = nn.Parameter((width ** -0.5) * torch.randn(50, width))
-            self.semantic_units_mapping = nn.Parameter((output_dim ** -0.5) * torch.randn(width, output_dim))
+            self.semantic_hoi_units_mapping = nn.Parameter((output_dim ** -0.5) * torch.randn(width, output_dim))
         # Additional parameters for detection head
         self.enable_dec = enable_dec
         if enable_dec:
@@ -313,9 +313,11 @@ class HOIVisionTransformer(nn.Module):
         hoi = hoi.permute(1, 0, 2)  # NLD -> LND
         image, hoi, attn_map = self.transformer(image, hoi, mask_flatten)
         if self.use_semantic_query:
-            cur_semantic_units = (self.semantic_units @ self.semantic_units_mapping.T).unsqueeze(1).repeat(1, hoi.shape[1], 1)
-            hoi, attn_output_weights = self.semancit_query_genarator(hoi, cur_semantic_units, cur_semantic_units)
-            image, hoi, attn_map = self.semantic_transformer(image, hoi, mask_flatten)
+            # cur_semantic_units = (self.semantic_units @ self.semantic_hoi_units_mapping.T).unsqueeze(1).repeat(1, hoi.shape[1], 1)
+            # hoi, attn_output_weights = self.semancit_hoi_query_genarator(hoi, cur_semantic_units, cur_semantic_units)
+            cur_semantic_units = (self.semantic_units @ self.semantic_hoi_units_mapping.T)
+            hoi = nn.Softmax(dim=-1)(hoi @ cur_semantic_units.T) @ cur_semantic_units
+            image, hoi, attn_map = self.semantic_hoi_transformer(image, hoi, mask_flatten)
         
         image = image.permute(1, 0, 2)  # LND -> NLD
         hoi = hoi.permute(1, 0, 2)  # LND -> NLD
