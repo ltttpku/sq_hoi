@@ -57,7 +57,7 @@ def main(args):
                 frozen_modules.append(n)
                 frozen_params.append(p)
                 p.requires_grad = False
-
+        import pdb; pdb.set_trace()
         optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()),
                                       lr=args.lr, weight_decay=args.weight_decay)
         return optimizer

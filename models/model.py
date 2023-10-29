@@ -112,7 +112,7 @@ class SemanticHOIResidualAttentionBlock(nn.Module):
 
         self.hoi_parse_attn = nn.MultiheadAttention(d_model, n_head, dropout=0.1)
         self.semantic_cross_attn = nn.MultiheadAttention(d_model, n_head, dropout=0.1)
-        self.attn = nn.MultiheadAttention(d_model, n_head)
+        # self.attn = nn.MultiheadAttention(d_model, n_head)
 
         self.ln_1 = LayerNorm(d_model)
         self.mlp = nn.Sequential(OrderedDict([
@@ -129,8 +129,8 @@ class SemanticHOIResidualAttentionBlock(nn.Module):
         self.dropout2 = nn.Dropout(0.1)
         self.dropout3 = nn.Dropout(0.1)
 
-    def image_attention(self, image: torch.Tensor, mask: torch.Tensor = None):
-        return self.attn(image, image, image, need_weights=False, key_padding_mask=mask)[0]
+    # def image_attention(self, image: torch.Tensor, mask: torch.Tensor = None):
+    #     return self.attn(image, image, image, need_weights=False, key_padding_mask=mask)[0]
 
     def hoi_attention(self, hoi: torch.Tensor, attn_mask: torch.Tensor = None):
         attn_mask = attn_mask.type_as(hoi) if attn_mask is not None else None
@@ -212,7 +212,7 @@ class HOIVisionTransformer(nn.Module):
         self.use_semantic_query = use_semantic_query
         if use_semantic_query:
             self.semancit_query_genarator = nn.MultiheadAttention(embed_dim=width, num_heads=8)
-            self.semantic_transformer = SemanticHOITransformer(width=width, layers=semantic_layers, heads=semantic_heads, attn_mask=hoi_parser_attn_mask)
+            self.semantic_hoi_transformer = SemanticHOITransformer(width=width, layers=semantic_layers, heads=semantic_heads, attn_mask=hoi_parser_attn_mask)
             if os.path.exists(semantic_units_file):
                 print("[INFO] load semantic units from", semantic_units_file)
                 self.semantic_units = pickle.load(open(semantic_units_file, "rb"))
