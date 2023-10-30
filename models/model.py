@@ -36,7 +36,7 @@ class HOIResidualAttentionBlock(nn.Module):
         - [HOI] x [PATCH]: cross-attention between [HOI] tokens and image patches.
         - [HOI] x [CLS + HOI]: HOI sequential parsing.
     '''
-    def __init__(self, d_model: int, n_head: int, parse_attn_mask: torch.Tensor = None):
+    def __init__(self, d_model: int, n_head: int, parse_attn_mask: torch.Tensor = None, use_semantic_query: bool=False):
         super().__init__()
 
         self.hoi_parse_attn = nn.MultiheadAttention(d_model, n_head, dropout=0.1)
@@ -58,6 +58,12 @@ class HOIResidualAttentionBlock(nn.Module):
         self.dropout2 = nn.Dropout(0.1)
         self.dropout3 = nn.Dropout(0.1)
 
+        self.use_semantic_query = use_semantic_query
+        self.semantic_hoi_cross_attn = nn.MultiheadAttention(d_model, n_head, dropout=0.1)
+        self.hoi_ln3 = LayerNorm(d_model)
+        self.hoi_semantic_ln3 = LayerNorm(d_model)
+        self.dropout4 = nn.Dropout(0.1)
+
     def image_attention(self, image: torch.Tensor, mask: torch.Tensor = None):
         return self.attn(image, image, image, need_weights=False, key_padding_mask=mask)[0]
 
@@ -66,7 +72,10 @@ class HOIResidualAttentionBlock(nn.Module):
         hoi, attn_map = self.hoi_parse_attn(hoi, hoi, hoi, attn_mask=attn_mask)
         return hoi
 
-    def forward(self, image: torch.Tensor, hoi: torch.Tensor, mask: torch.Tensor = None):
+    def forward(self, image: torch.Tensor, hoi: torch.Tensor, mask: torch.Tensor = None, semantic_units: torch.Tensor = None):
+        if self.use_semantic_query:
+            semantic_hoi, attn_map = self.semantic_hoi_cross_attn(self.hoi_ln3(hoi), self.hoi_semantic_ln3(semantic_units), self.hoi_semantic_ln3(semantic_units))
+            semantic_hoi = self.mlp(self.ln_2(semantic_hoi))
 
         # [HOI] x [PATCH] cross attention. [CLS] is masked out.
         y, attn_map = self.hoi_cross_attn(self.ln_1(hoi), self.ln_1(image), self.ln_1(image), key_padding_mask=mask)
@@ -84,83 +93,23 @@ class HOIResidualAttentionBlock(nn.Module):
         x = x + self.dropout3(self.hoi_attention(self.hoi_ln1(x), attn_mask=self.parse_attn_mask))
         hoi = x[1:]
 
+        if self.use_semantic_query:
+            hoi = hoi + self.dropout4(semantic_hoi)
+
         return image, hoi, attn_map
 
 
 class HOITransformer(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor=None):
+    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor=None, use_semantic_query: bool=False):
         super().__init__()
         self.width = width
         self.layers = layers
-        self.resblocks = nn.Sequential(*[HOIResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
+        self.resblocks = nn.Sequential(*[HOIResidualAttentionBlock(width, heads, attn_mask, use_semantic_query) for _ in range(layers)])
+        self.use_semantic_query = use_semantic_query
 
-    def forward(self, image: torch.Tensor, hoi: torch.Tensor, mask: torch.Tensor = None):
+    def forward(self, image: torch.Tensor, hoi: torch.Tensor, mask: torch.Tensor = None, semantic_units: torch.Tensor = None):
         for resblock in self.resblocks:
-            image, hoi, attn_map = resblock(image, hoi, mask)
-        return image, hoi, attn_map
-
-
-class SemanticHOIResidualAttentionBlock(nn.Module):
-    '''
-    [CLS + PATCH], [HOI] attention block in HOI Vision Encoder:
-        - [CLS + PATCH] x [CLS + PATCH]: original attention uses CLIP's pretrained weights.
-        - [HOI] x [PATCH]: cross-attention between [HOI] tokens and image patches.
-        - [HOI] x [CLS + HOI]: HOI sequential parsing.
-    '''
-    def __init__(self, d_model: int, n_head: int, parse_attn_mask: torch.Tensor = None):
-        super().__init__()
-
-        self.hoi_parse_attn = nn.MultiheadAttention(d_model, n_head, dropout=0.1)
-        self.semantic_cross_attn = nn.MultiheadAttention(d_model, n_head, dropout=0.1)
-        # self.attn = nn.MultiheadAttention(d_model, n_head)
-
-        self.ln_1 = LayerNorm(d_model)
-        self.mlp = nn.Sequential(OrderedDict([
-            ("c_fc", nn.Linear(d_model, d_model * 4)),
-            ("gelu", QuickGELU()),
-            ("c_proj", nn.Linear(d_model * 4, d_model))
-        ]))
-        self.ln_2 = LayerNorm(d_model)
-        self.parse_attn_mask = parse_attn_mask
-
-        self.hoi_ln1 = LayerNorm(d_model)
-        self.hoi_ln2 = LayerNorm(d_model)
-        self.dropout1 = nn.Dropout(0.1)
-        self.dropout2 = nn.Dropout(0.1)
-        self.dropout3 = nn.Dropout(0.1)
-
-    # def image_attention(self, image: torch.Tensor, mask: torch.Tensor = None):
-    #     return self.attn(image, image, image, need_weights=False, key_padding_mask=mask)[0]
-
-    def hoi_attention(self, hoi: torch.Tensor, attn_mask: torch.Tensor = None):
-        attn_mask = attn_mask.type_as(hoi) if attn_mask is not None else None
-        hoi, attn_map = self.hoi_parse_attn(hoi, hoi, hoi, attn_mask=attn_mask)
-        return hoi
-
-    def forward(self, image: torch.Tensor, hoi: torch.Tensor, mask: torch.Tensor = None):
-
-        # [HOI] x [PATCH] cross attention. [CLS] is masked out.
-        y, attn_map = self.semantic_cross_attn(self.ln_1(hoi), self.ln_1(image), self.ln_1(image), key_padding_mask=mask)
-        hoi = hoi + self.dropout1(y)
-        hoi = hoi + self.dropout2(self.mlp(self.ln_2(hoi)))
-
-        # [HOI] x [CLS + HOI], HOI sequential parsing
-        x = torch.cat([image[0:1], hoi], dim=0)
-        x = x + self.dropout3(self.hoi_attention(self.hoi_ln1(x), attn_mask=self.parse_attn_mask))
-        hoi = x[1:]
-
-        return image, hoi, attn_map
-
-class SemanticHOITransformer(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor=None):
-        super().__init__()
-        self.width = width
-        self.layers = layers
-        self.resblocks = nn.Sequential(*[SemanticHOIResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
-
-    def forward(self, image: torch.Tensor, hoi: torch.Tensor, mask: torch.Tensor = None):
-        for resblock in self.resblocks:
-            image, hoi, attn_map = resblock(image, hoi, mask)
+            image, hoi, attn_map = resblock(image, hoi, mask, semantic_units)
         return image, hoi, attn_map
 
 
@@ -203,7 +152,7 @@ class HOIVisionTransformer(nn.Module):
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
         # Modified Transformer blocks
-        self.transformer = HOITransformer(width, layers, heads, hoi_parser_attn_mask)
+        self.transformer = HOITransformer(width, layers, heads, hoi_parser_attn_mask, use_semantic_query)
 
         # Additional parameters for HOI detection
         self.hoi_token_embed = nn.Parameter(scale * torch.randn(hoi_token_length, width))
@@ -211,8 +160,6 @@ class HOIVisionTransformer(nn.Module):
 
         self.use_semantic_query = use_semantic_query
         if use_semantic_query:
-            # self.semancit_hoi_query_genarator = nn.MultiheadAttention(embed_dim=width, num_heads=8)
-            self.semantic_hoi_transformer = SemanticHOITransformer(width=width, layers=semantic_layers, heads=semantic_heads, attn_mask=hoi_parser_attn_mask)
             if os.path.exists(semantic_units_file):
                 print("[INFO] load semantic units from", semantic_units_file)
                 self.semantic_units = pickle.load(open(semantic_units_file, "rb"))
@@ -311,13 +258,10 @@ class HOIVisionTransformer(nn.Module):
         # HOI visual transformers
         image = image.permute(1, 0, 2)  # NLD -> LND
         hoi = hoi.permute(1, 0, 2)  # NLD -> LND
-        image, hoi, attn_map = self.transformer(image, hoi, mask_flatten)
         if self.use_semantic_query:
-            # cur_semantic_units = (self.semantic_units @ self.semantic_hoi_units_mapping.T).unsqueeze(1).repeat(1, hoi.shape[1], 1)
-            # hoi, attn_output_weights = self.semancit_hoi_query_genarator(hoi, cur_semantic_units, cur_semantic_units)
-            cur_semantic_units = (self.semantic_units @ self.semantic_hoi_units_mapping.T)
-            hoi = nn.Softmax(dim=-1)(hoi @ cur_semantic_units.T) @ cur_semantic_units
-            image, hoi, attn_map = self.semantic_hoi_transformer(image, hoi, mask_flatten)
+            cur_semantics = self.semantic_units @ self.semantic_hoi_units_mapping.T
+            cur_semantics = cur_semantics.unsqueeze(1).repeat(1, hoi.shape[1], 1)
+        image, hoi, attn_map = self.transformer(image, hoi, mask_flatten, cur_semantics)
         
         image = image.permute(1, 0, 2)  # LND -> NLD
         hoi = hoi.permute(1, 0, 2)  # LND -> NLD
@@ -689,7 +633,7 @@ def build_model(args):
         # Copy the pretrained CLIP parameters as the initilized weights for our newly added modules. 
         state_dict = clip_model.state_dict()
         for n, p in model.named_parameters():
-            if "hoi_cross_attn" in n:
+            if "hoi_cross_attn" in n and "semantic" not in n:
                 copy_n = n.replace("hoi_cross_attn", "attn")
                 state_dict.update({n: state_dict[copy_n].clone()})
         model.load_state_dict(state_dict, strict=False)
