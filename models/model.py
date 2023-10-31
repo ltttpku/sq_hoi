@@ -586,7 +586,7 @@ def convert_weights(model: nn.Module):
 
         nnParams_modules = [
             "text_projection", "proj", "hoi_prefix", "hoi_conjun", "hoi_pos_embed",
-            "hoi_token_embed", "class_embedding", "positional_embedding"]
+            "hoi_token_embed", "class_embedding", "positional_embedding", "semantic_units", "semantic_hoi_units_mapping"]
         for name in nnParams_modules:
             if hasattr(l, name):
                 attr = getattr(l, name)
