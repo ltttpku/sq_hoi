@@ -55,6 +55,9 @@ def get_args_parser():
                         help="number of [PREFIX] tokens at the beginning of sentences")
     parser.add_argument('--conjun_length', default=2, type=int,
                         help="number of [CONJUN] tokens between actions and objects")
+    parser.add_argument('--auxiliary_prefix_length', default=8, type=int)
+    parser.add_argument('--use_auxiliary_text', action='store_true', help='enable auxiliary_text')
+    
     # * Bounding box head
     parser.add_argument('--enable_dec', action='store_true', help='enable decoders')
     parser.add_argument('--dec_heads', default=8, type=int,

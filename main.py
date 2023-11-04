@@ -119,14 +119,15 @@ def main(args):
         if args.distributed:
             sampler_train.set_epoch(epoch)
         train_stats = train_one_epoch(model, criterion, data_loader_train, optimizer,
-                                      device, epoch, args.clip_max_norm)
+                                      device, epoch, args.clip_max_norm, dataset_file=args.dataset_file,
+                                      use_auxiliary_text=args.use_auxiliary_text)
         lr_scheduler.step(epoch)
 
         # checkpoint saving
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
             # extra checkpoint before LR drop and every 100 epochs
-            if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % 100 == 0:
+            if (epoch + 1) % args.lr_drop == 0 or (epoch % 10 == 0 and epoch >= 60):
                 checkpoint_paths.append(output_dir / f'checkpoint{epoch:04}.pth')
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master({

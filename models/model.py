@@ -59,10 +59,11 @@ class HOIResidualAttentionBlock(nn.Module):
         self.dropout3 = nn.Dropout(0.1)
 
         self.use_semantic_query = use_semantic_query
-        self.semantic_hoi_cross_attn = nn.MultiheadAttention(d_model, n_head, dropout=0.1)
-        self.hoi_ln3 = LayerNorm(d_model)
-        self.hoi_semantic_ln3 = LayerNorm(d_model)
-        self.dropout4 = nn.Dropout(0.1)
+        if use_semantic_query:
+            self.semantic_hoi_cross_attn = nn.MultiheadAttention(d_model, n_head, dropout=0.1)
+            self.hoi_ln3 = LayerNorm(d_model)
+            self.hoi_semantic_ln3 = LayerNorm(d_model)
+            self.dropout4 = nn.Dropout(0.1)
 
     def image_attention(self, image: torch.Tensor, mask: torch.Tensor = None):
         return self.attn(image, image, image, need_weights=False, key_padding_mask=mask)[0]
@@ -261,6 +262,8 @@ class HOIVisionTransformer(nn.Module):
         if self.use_semantic_query:
             cur_semantics = self.semantic_units @ self.semantic_hoi_units_mapping.T
             cur_semantics = cur_semantics.unsqueeze(1).repeat(1, hoi.shape[1], 1)
+        else:
+            cur_semantics = None
         image, hoi, attn_map = self.transformer(image, hoi, mask_flatten, cur_semantics)
         
         image = image.permute(1, 0, 2)  # LND -> NLD
@@ -337,6 +340,7 @@ class HOIDetector(nn.Module):
         transformer_layers: int,
         prefix_length: int = 8,
         conjun_length: int = 4,
+        auxiliary_prefix_length: int = 8,
     ):
         super().__init__()
 
@@ -377,12 +381,14 @@ class HOIDetector(nn.Module):
 
         self.text_projection = nn.Parameter(torch.empty(transformer_width, embed_dim))
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        self.auxiliary_logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
         self.prefix_length = prefix_length
         self.conjun_length = conjun_length
+        self.auxiliary_prefix_length = auxiliary_prefix_length
         self.hoi_prefix = nn.Parameter(torch.empty(prefix_length, transformer_width))
         self.hoi_conjun = nn.Parameter(torch.empty(conjun_length, transformer_width))
-
+        self.auxiliary_hoi_prefix = nn.Parameter(torch.empty(auxiliary_prefix_length, transformer_width))
         self.initialize_parameters()
 
     def initialize_parameters(self):
@@ -427,9 +433,12 @@ class HOIDetector(nn.Module):
     def encode_image(self, image, image_mask=None):
         return self.visual(image.type(self.dtype), image_mask)
 
-    def encode_text(self, text):
+    def encode_text(self, text, is_auxiliary_text=False):
         # x = self.token_embedding(text).type(self.dtype)  # [batch_size, n_ctx, d_model]
-        x, eot_indices = self.text_to_embedding(text)
+        if is_auxiliary_text:
+            x, eot_indices = self.auxiliary_texts_to_embedding(text)
+        else:
+            x, eot_indices = self.text_to_embedding(text)
         x = x + self.positional_embedding.type(self.dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x)
@@ -443,6 +452,34 @@ class HOIDetector(nn.Module):
 
         return x
 
+    def auxiliary_texts_to_embedding(self, auxiliary_texts):
+        """ text (List[List[Tensor]]): A list of action text tokens and object text tokens.
+            [
+                description text 1,
+                description text 2,
+                ...
+                description text n,
+            ]
+        """
+        all_token_embeddings = []
+        eot_indices = []
+
+        for description_token in auxiliary_texts:
+            remain_length = self.context_length - self.auxiliary_prefix_length - len(description_token)
+            if remain_length < 0:
+                raise RuntimeError(f"Input text is too long for context length {self.context_length}")
+            eot_indices.append(self.context_length - remain_length - 1)
+            padding_zeros = torch.zeros(remain_length, dtype=torch.long).to(description_token.device)
+            token = torch.cat([description_token, padding_zeros])
+            token_embedding = self.token_embedding(token).type(self.dtype)
+            full_token_embedding = torch.cat([
+                token_embedding[0:1, :], self.auxiliary_hoi_prefix, token_embedding[1:, :]], dim=0)
+            all_token_embeddings.append(full_token_embedding)
+        
+        eot_indices = torch.as_tensor(eot_indices)
+        x = torch.stack(all_token_embeddings, dim=0)  # [batch_size, n_ctx, d_model]
+        return x, eot_indices
+    
     def text_to_embedding(self, text):
         """ text (List[List[Tensor]]): A list of action text tokens and object text tokens.
             [
@@ -471,12 +508,15 @@ class HOIDetector(nn.Module):
         x = torch.stack(all_token_embeddings, dim=0)  # [batch_size, n_ctx, d_model]
         return x, eot_indices
 
-    def forward(self, image, text, image_mask=None):
+    def forward(self, image, text, image_mask=None, auxiliary_texts=None):
         # vision encoder
         vision_outputs = self.encode_image(image, image_mask)
 
         # text encoder
         text_features = self.encode_text(text)
+        if auxiliary_texts is not None:
+            auxiliary_text_features = self.encode_text(auxiliary_texts, is_auxiliary_text=True)
+            auxiliary_text_features = auxiliary_text_features / auxiliary_text_features.norm(dim=-1, keepdim=True)
 
         # normalized features
         image_features = vision_outputs["image_features"]
@@ -487,11 +527,16 @@ class HOIDetector(nn.Module):
 
         # [image level] cosine similarity as logits
         logit_scale = self.logit_scale.exp()
+        auxiliary_logit_scale = self.auxiliary_logit_scale.exp()
+        
         logits_per_image = logit_scale * image_features @ text_features.t()
         logits_per_text = logits_per_image.t()
 
         # [hoi level] cosine similarity between hoi_features and text_features
         logits_per_hoi = logit_scale * hoi_features @ text_features.t()
+
+        if auxiliary_texts is not None:
+            logits_per_hoi = logits_per_hoi + auxiliary_logit_scale * hoi_features @ auxiliary_text_features.t()
 
         return_dict = {
             "logits_per_image": logits_per_image,
@@ -585,7 +630,7 @@ def convert_weights(model: nn.Module):
                     tensor.data = tensor.data.half()
 
         nnParams_modules = [
-            "text_projection", "proj", "hoi_prefix", "hoi_conjun", "hoi_pos_embed",
+            "text_projection", "proj", "hoi_prefix", "hoi_conjun","auxiliary_hoi_prefix", "hoi_pos_embed",
             "hoi_token_embed", "class_embedding", "positional_embedding", "semantic_units", "semantic_hoi_units_mapping"]
         for name in nnParams_modules:
             if hasattr(l, name):
@@ -624,6 +669,7 @@ def build_model(args):
         transformer_layers=args.transformer_layers,
         prefix_length=args.prefix_length,
         conjun_length=args.conjun_length,
+        auxiliary_prefix_length=args.auxiliary_prefix_length,
     )
 
     # Load pretrained CLIP weights
