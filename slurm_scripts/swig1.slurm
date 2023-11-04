@@ -33,15 +33,14 @@ cd /scratch/generalvision/ting/sq_hoi
 
 
 ## Training
-/home/leiting/scratch/.conda/envs/thid/bin/python -m torch.distributed.launch --nproc_per_node=4 --master_port 1887 --use_env main.py \
+/home/leiting/scratch/.conda/envs/thid/bin/python -m torch.distributed.launch --nproc_per_node=4 --master_port 1996 --use_env main.py \
     --batch_size 32 \
-    --output_dir checkpoints/swig_bs4x32_lr1e-4_token10_su50_prefix32 \
+    --output_dir checkpoints/swig_bs4x32_lr1e-4_token10_AuxText+16 \
     --epochs 120 \
     --lr 1e-4 --min-lr 1e-7 \
     --hoi_token_length 10 \
     --enable_dec \
-    --dataset_file swig \
-    --use_semantic_query true --semantic_units_file semantic_units_files/su_word_50.pkl --prefix_length 32
+    --dataset_file swig --use_auxiliary_text --auxiliary_prefix_length 16
 
 # ## Inference
 # export MASTER_ADDR=localhost

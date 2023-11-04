@@ -8,6 +8,7 @@ from torch import nn
 from typing import Tuple, Union
 from collections import OrderedDict
 import pickle
+# from transformers import AutoTokenizer, DistilBertModel
 
 import utils.box_ops as box_ops
 from clip.model import Transformer, LayerNorm, MLP, QuickGELU
@@ -313,6 +314,17 @@ class HOIVisionTransformer(nn.Module):
                            "attn_maps": attn_map}
         return return_dict
 
+# class DistilBert(nn.Module):
+#     def __init__(self, joint_space_size, dataset):
+#         super().__init__()
+#         self.bert = DistilBertModel.from_pretrained('distilbert-base-uncased')
+#         self.fc_out1 = nn.Linear(768, joint_space_size)
+#         self.fc_out2 = nn.Linear(768, joint_space_size)
+#         self.dataset = dataset
+#         self.layernorm = nn.LayerNorm(768)
+#         self.aggregation = "avg"  # cls, avg
+    
+#     def forward(self, )
 
 class HOIDetector(nn.Module):
     def __init__(
@@ -377,7 +389,7 @@ class HOIDetector(nn.Module):
         self.vocab_size = vocab_size
         self.token_embedding = nn.Embedding(vocab_size, transformer_width)
         self.positional_embedding = nn.Parameter(torch.empty(self.context_length, transformer_width))
-        self.hoi_positional_embedding = nn.Parameter(torch.empty(self.context_length, transformer_width))
+
         self.ln_final = LayerNorm(transformer_width)
 
         self.text_projection = nn.Parameter(torch.empty(transformer_width, embed_dim))
@@ -389,13 +401,13 @@ class HOIDetector(nn.Module):
         self.auxiliary_prefix_length = auxiliary_prefix_length
         self.hoi_prefix = nn.Parameter(torch.empty(prefix_length, transformer_width))
         self.hoi_conjun = nn.Parameter(torch.empty(conjun_length, transformer_width))
-        self.auxiliary_hoi_prefix = nn.Parameter(torch.empty(auxiliary_prefix_length, transformer_width))
+        if auxiliary_prefix_length > 0:
+            self.auxiliary_hoi_prefix = nn.Parameter(torch.empty(auxiliary_prefix_length, transformer_width))
         self.initialize_parameters()
 
     def initialize_parameters(self):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.positional_embedding, std=0.01)
-        nn.init.normal_(self.hoi_positional_embedding, std=0.01)
 
         proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
         attn_std = self.transformer.width ** -0.5
@@ -439,10 +451,9 @@ class HOIDetector(nn.Module):
         # x = self.token_embedding(text).type(self.dtype)  # [batch_size, n_ctx, d_model]
         if is_auxiliary_text:
             x, eot_indices = self.auxiliary_texts_to_embedding(text)
-            x = x + self.hoi_positional_embedding.type(self.dtype)
         else:
             x, eot_indices = self.text_to_embedding(text)
-            x = x + self.positional_embedding.type(self.dtype)
+        x = x + self.positional_embedding.type(self.dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
@@ -475,8 +486,11 @@ class HOIDetector(nn.Module):
             padding_zeros = torch.zeros(remain_length, dtype=torch.long).to(description_token.device)
             token = torch.cat([description_token, padding_zeros])
             token_embedding = self.token_embedding(token).type(self.dtype)
-            full_token_embedding = torch.cat([
-                token_embedding[0:1, :], self.auxiliary_hoi_prefix, token_embedding[1:, :]], dim=0)
+            if self.auxiliary_prefix_length > 0:
+                full_token_embedding = torch.cat([
+                    token_embedding[0:1, :], token_embedding[1:-1, :], self.auxiliary_hoi_prefix, token_embedding[-1:, :]], dim=0)
+            else:
+                full_token_embedding = torch.cat([token_embedding[0:1, :], token_embedding[1:, :]], dim=0)
             all_token_embeddings.append(full_token_embedding)
         
         eot_indices = torch.as_tensor(eot_indices)
@@ -634,7 +648,7 @@ def convert_weights(model: nn.Module):
 
         nnParams_modules = [
             "text_projection", "proj", "hoi_prefix", "hoi_conjun","auxiliary_hoi_prefix", "hoi_pos_embed",
-            "hoi_token_embed", "class_embedding", "positional_embedding", "hoi_positional_embedding", "semantic_units", "semantic_hoi_units_mapping"]
+            "hoi_token_embed", "class_embedding", "positional_embedding", "semantic_units", "semantic_hoi_units_mapping"]
         for name in nnParams_modules:
             if hasattr(l, name):
                 attr = getattr(l, name)

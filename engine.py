@@ -263,7 +263,7 @@ def prepare_text_inputs(model, texts, device, hoi_descriptions):
         cur_hoi_description_token = _tokenizer.encode(cur_hoi_description)
         cur_hoi_description_token = torch.as_tensor([sot_token] + cur_hoi_description_token + [eot_token], dtype=torch.long).to(device)
         auxiliary_texts.append(cur_hoi_description_token)
-
+    import pdb; pdb.set_trace()
     text_features = model.encode_text(text_tokens)
     text_features /= text_features.norm(dim=-1, keepdim=True)
 
