@@ -96,7 +96,7 @@ def evaluate(model, postprocessors, criterion, data_loader, device, args):
         hoi_features = vision_outputs['hoi_features']
         hoi_features = hoi_features / hoi_features.norm(dim=-1, keepdim=True)
         logits_per_hoi = model.logit_scale.exp() * hoi_features @ text_features.t()
-        if args.use_auxiliary_texts:
+        if args.use_auxiliary_text:
             logits_per_hoi = logits_per_hoi + model.auxiliary_logit_scale.exp() * hoi_features @ auxiliary_text_features.t()
 
         pred_boxes = vision_outputs["pred_boxes"]
