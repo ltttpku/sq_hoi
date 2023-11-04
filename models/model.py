@@ -473,7 +473,7 @@ class HOIDetector(nn.Module):
             token = torch.cat([description_token, padding_zeros])
             token_embedding = self.token_embedding(token).type(self.dtype)
             full_token_embedding = torch.cat([
-                token_embedding[0:1, :], self.auxiliary_hoi_prefix, token_embedding[1:, :]], dim=0)
+                token_embedding[0:1, :], token_embedding[1:, :], self.auxiliary_hoi_prefix], dim=0)
             all_token_embeddings.append(full_token_embedding)
         
         eot_indices = torch.as_tensor(eot_indices)
