@@ -105,7 +105,7 @@ def evaluate(model, postprocessors, criterion, data_loader, device, args):
         outputs = {"logits_per_hoi": logits_per_hoi,
                    "pred_boxes": pred_boxes,
                    "box_scores": box_scores,
-                   "aux_outputs": vision_outputs["aux_outputs"],
+                #    "aux_outputs": vision_outputs["aux_outputs"],
                    "attn_maps": vision_outputs['attn_maps']}
 
         loss_dict, indices = criterion(outputs, targets)

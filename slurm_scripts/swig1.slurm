@@ -5,7 +5,7 @@
 #SBATCH --qos=lv0b
 #SBATCH --nodes=1                # node count
 #SBATCH --ntasks=1               # total number of tasks across all nodes
-#SBATCH --gres=gpu:4             # number of gpus per node
+#SBATCH --gres=gpu:2             # number of gpus per node
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem=100G               # total memory (RAM) per node
 #SBATCH --time=0-24:00:00          # total run time limit (HH:MM:SS)
@@ -33,14 +33,14 @@ cd /scratch/generalvision/ting/sq_hoi
 
 
 ## Training
-/home/leiting/scratch/.conda/envs/thid/bin/python -m torch.distributed.launch --nproc_per_node=4 --master_port 1996 --use_env main.py \
-    --batch_size 32 \
-    --output_dir checkpoints/swig_bs4x32_lr1e-4_token10_AuxText+16 \
+/home/leiting/scratch/.conda/envs/thid/bin/python -m torch.distributed.launch --nproc_per_node=2 --master_port 1777 --use_env main.py \
+    --batch_size 64 \
+    --output_dir checkpoints/swig_bs2x64_lr1e-4_token5_AuxText+0 \
     --epochs 120 \
     --lr 1e-4 --min-lr 1e-7 \
-    --hoi_token_length 10 \
+    --hoi_token_length 5 \
     --enable_dec \
-    --dataset_file swig --use_auxiliary_text --auxiliary_prefix_length 16
+    --dataset_file swig --use_auxiliary_text --auxiliary_prefix_length 0
 
 # ## Inference
 # export MASTER_ADDR=localhost

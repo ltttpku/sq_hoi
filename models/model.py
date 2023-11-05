@@ -114,6 +114,14 @@ class HOITransformer(nn.Module):
             image, hoi, attn_map = resblock(image, hoi, mask, semantic_units)
         return image, hoi, attn_map
 
+    def forward_multilevel(self, image: torch.Tensor, hoi: torch.Tensor, mask: torch.Tensor = None, semantic_units: torch.Tensor = None, level_idxs: list = [5, 8, 11]):
+        hoi_lst, attn_map_lst = [], []
+        for idx, resblock in enumerate(self.resblocks):
+            image, hoi, attn_map = resblock(image, hoi, mask, semantic_units)
+            if idx in level_idxs:
+                hoi_lst.append(hoi)
+                attn_map_lst.append(attn_map)
+        return image, hoi_lst, attn_map_lst
 
 class HOIVisionTransformer(nn.Module):
     """ This module encodes RGB images and outputs HOI bounding box predictions and projected
@@ -130,10 +138,14 @@ class HOIVisionTransformer(nn.Module):
         output_dim: int,
         hoi_token_length: int = 5,
         hoi_parser_attn_mask: torch.Tensor = None,
+        # sematnic query
         use_semantic_query: bool = False,
         semantic_units_file: str = "",
         semantic_heads: int = 8,
         semantic_layers: int = 6,
+        # multi-level
+        enable_multi_level: bool = False,
+        level_idxs: list = [],
         # bounding box head
         enable_dec: bool = False,
         dec_heads: int = 8,
@@ -159,7 +171,7 @@ class HOIVisionTransformer(nn.Module):
         # Additional parameters for HOI detection
         self.hoi_token_embed = nn.Parameter(scale * torch.randn(hoi_token_length, width))
         self.hoi_pos_embed = nn.Parameter(scale * torch.randn(hoi_token_length, width))
-
+        # Additional parameters for semantic query generation
         self.use_semantic_query = use_semantic_query
         if use_semantic_query:
             if os.path.exists(semantic_units_file):
@@ -172,6 +184,9 @@ class HOIVisionTransformer(nn.Module):
                 print("[WARNING] use random semantic units!!!")
                 self.semantic_units = nn.Parameter((width ** -0.5) * torch.randn(50, width))
             self.semantic_hoi_units_mapping = nn.Parameter((output_dim ** -0.5) * torch.randn(width, output_dim))
+        # Additional parameters for multi-level feature maps
+        self.enable_multi_level = enable_multi_level
+        self.level_idxs = level_idxs
         # Additional parameters for detection head
         self.enable_dec = enable_dec
         if enable_dec:
@@ -265,7 +280,13 @@ class HOIVisionTransformer(nn.Module):
             cur_semantics = cur_semantics.unsqueeze(1).repeat(1, hoi.shape[1], 1)
         else:
             cur_semantics = None
-        image, hoi, attn_map = self.transformer(image, hoi, mask_flatten, cur_semantics)
+
+        if self.enable_multi_level:
+            image, hoi_lst, attn_map_lst = self.transformer.forward_multilevel(image, hoi, mask_flatten, cur_semantics, self.level_idxs)
+            hoi = torch.cat(hoi_lst, dim=0) # LND
+            attn_map = torch.cat(attn_map_lst, dim=1)
+        else:
+            image, hoi, attn_map = self.transformer(image, hoi, mask_flatten, cur_semantics)
         
         image = image.permute(1, 0, 2)  # LND -> NLD
         hoi = hoi.permute(1, 0, 2)  # LND -> NLD
@@ -284,26 +305,55 @@ class HOIVisionTransformer(nn.Module):
             hoi = hoi.permute(1, 0, 2) # NLD -> LND
             image = image.permute(1, 0, 2) # NLD -> LND
 
-            hidden = self.bbox_head(
-                tgt=hoi,
-                tgt_mask=self.hoi_parser_attn_mask[1:, 1:].to(hoi.device), # exclude [CLS]
-                query_pos=self.hoi_pos_embed[:, None, :],
-                memory=image[1:], # exclude [CLS]
-                memory_key_padding_mask=mask_flatten[:, 1:], # exclude [CLS]
-                pos=patch_pos)
+            if self.enable_multi_level:
+                return_dict_lst = []
+                for idx, hoi in enumerate(hoi_lst):
+                    hidden = self.bbox_head(
+                        tgt=hoi,
+                        tgt_mask=self.hoi_parser_attn_mask[1:, 1:].to(hoi.device), # exclude [CLS]
+                        query_pos=self.hoi_pos_embed[:, None, :],
+                        memory=image[1:], # exclude [CLS]
+                        memory_key_padding_mask=mask_flatten[:, 1:], # exclude [CLS]
+                        pos=patch_pos)
+                    box_scores = self.bbox_score(hidden) # [layers, L, N, 1]
+                    pred_boxes = self.bbox_embed(hidden).sigmoid() # [layers, L, N, 8]
+                    box_scores = box_scores.permute(0, 2, 1, 3) # [layers, N, L, 1]
+                    pred_boxes = pred_boxes.permute(0, 2, 1, 3) # [layers, N, L, 8]
+                    aux_outputs = [{"pred_boxes": a, "box_scores": b} for a, b in zip(pred_boxes[:-1], box_scores[:-1])]
+                    return_dict = {
+                                "pred_boxes": pred_boxes[-1],
+                                "box_scores": box_scores[-1],
+                                # "aux_outputs": aux_outputs,
+                                "level": torch.ones_like(box_scores[-1]) * idx / len(hoi_lst)}
+                    return_dict_lst.append(return_dict)
+                ## accumulate all types of outputs
+                return_dict = {"image_features": image_features,
+                                "hoi_features": hoi_features,
+                                "attn_maps": attn_map,}
+                key_lst = list(return_dict_lst[0].keys())
+                for k in key_lst:
+                    return_dict[k] = torch.cat([return_dict_lst[level_i][k] for level_i in range(len(return_dict_lst))], dim=1)
+            else:
+                hidden = self.bbox_head(
+                    tgt=hoi,
+                    tgt_mask=self.hoi_parser_attn_mask[1:, 1:].to(hoi.device), # exclude [CLS]
+                    query_pos=self.hoi_pos_embed[:, None, :],
+                    memory=image[1:], # exclude [CLS]
+                    memory_key_padding_mask=mask_flatten[:, 1:], # exclude [CLS]
+                    pos=patch_pos)
 
-            box_scores = self.bbox_score(hidden) # [layers, L, N, 1]
-            pred_boxes = self.bbox_embed(hidden).sigmoid() # [layers, L, N, 8]
-            box_scores = box_scores.permute(0, 2, 1, 3) # [layers, N, L, 1]
-            pred_boxes = pred_boxes.permute(0, 2, 1, 3) # [layers, N, L, 8]
-            aux_outputs = [{"pred_boxes": a, "box_scores": b} for a, b in zip(pred_boxes[:-1], box_scores[:-1])]
+                box_scores = self.bbox_score(hidden) # [layers, L, N, 1]
+                pred_boxes = self.bbox_embed(hidden).sigmoid() # [layers, L, N, 8]
+                box_scores = box_scores.permute(0, 2, 1, 3) # [layers, N, L, 1]
+                pred_boxes = pred_boxes.permute(0, 2, 1, 3) # [layers, N, L, 8]
+                aux_outputs = [{"pred_boxes": a, "box_scores": b} for a, b in zip(pred_boxes[:-1], box_scores[:-1])]
 
-            return_dict = {"image_features": image_features,
-                           "hoi_features": hoi_features,
-                           "pred_boxes": pred_boxes[-1],
-                           "box_scores": box_scores[-1],
-                           "attn_maps": attn_map,
-                           "aux_outputs": aux_outputs}
+                return_dict = {"image_features": image_features,
+                            "hoi_features": hoi_features,
+                            "pred_boxes": pred_boxes[-1],
+                            "box_scores": box_scores[-1],
+                            "attn_maps": attn_map,
+                            "aux_outputs": aux_outputs}
         else:
             box_scores = self.bbox_score(hoi)
             pred_boxes = self.bbox_embed(hoi).sigmoid()
@@ -336,10 +386,14 @@ class HOIDetector(nn.Module):
         vision_width: int,
         vision_patch_size: int,
         hoi_token_length: int,
+        # semantic query
         use_semantic_query: bool,
         semantic_units_file: str,
         semantic_heads: int,
         semantic_layers: int,
+        # multi-level
+        enable_multi_level: bool,
+        level_idxs: list,
         # detection head
         enable_dec: bool,
         dec_heads: int,
@@ -374,6 +428,8 @@ class HOIDetector(nn.Module):
             semantic_units_file=semantic_units_file,
             semantic_heads=semantic_heads,
             semantic_layers=semantic_layers,
+            enable_multi_level=enable_multi_level,
+            level_idxs=level_idxs,
             enable_dec=enable_dec,
             dec_heads=dec_heads,
             dec_layers=dec_layers,
@@ -563,6 +619,9 @@ class HOIDetector(nn.Module):
             "box_scores": vision_outputs["box_scores"],
             "attn_maps": vision_outputs["attn_maps"],
         }
+
+        if "level" in vision_outputs:
+            return_dict.update({"level": vision_outputs["level"]})
         if "aux_outputs" in vision_outputs:
             return_dict.update({"aux_outputs": vision_outputs["aux_outputs"]})
 
@@ -670,10 +729,14 @@ def build_model(args):
         vision_width=args.vision_width,
         vision_patch_size=args.vision_patch_size,
         hoi_token_length=args.hoi_token_length,
+        # semantic query
         use_semantic_query=args.use_semantic_query,
         semantic_units_file=args.semantic_units_file,
         semantic_heads=args.semantic_heads,
         semantic_layers=args.semantic_layers,
+        # multi-level
+        enable_multi_level=args.enable_multi_level,
+        level_idxs=args.level_idxs,
         # bounding box head
         enable_dec=args.enable_dec,
         dec_heads=args.dec_heads,

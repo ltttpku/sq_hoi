@@ -40,6 +40,8 @@ def get_args_parser():
                         help="Number of multi-head attention")
     parser.add_argument('--semantic_layers', default=4, type=int,
                         help="Number of layers in the bounding box head")
+    parser.add_argument('--enable_multi_level', action='store_true', help='enable multi_level')
+    parser.add_argument('--level_idxs', nargs='+', type=int)
     # * Text
     parser.add_argument('--context_length', default=77, type=int,
                         help="Maximum length of the text description")
